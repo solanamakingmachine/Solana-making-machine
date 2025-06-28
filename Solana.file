@@ -1,0 +1,180 @@
+# ✅ Solana Super Airdrop Bot - Final Ultra Pro Edition (Real Mode)
+# Platform: Pydroid 3 or Railway
+# Features: 30 Wallets, Auto-Sell via Jupiter, Auto-Send SOL, Email + Telegram Alerts
+
+import os, json, time, random, requests, base64, smtplib
+from email.mime.text import MIMEText
+from solana.keypair import Keypair
+from solana.rpc.api import Client
+from solana.transaction import Transaction
+from solana.rpc.types import TxOpts
+from solana.system_program import TransferParams, transfer
+from solana.rpc.commitment import Confirmed
+from base58 import b58encode, b58decode
+
+# === CONFIG ===
+RPC = "https://api.mainnet-beta.solana.com"
+client = Client(RPC)
+main_wallet = "3JqVjWwUJcYYYcQRAW7bv2vp7BqWzkSWKpFyVF1o1i7K"
+
+# ✅ Telegram
+telegram_bot_token = "6550396882:AAHxrVpWaYzPrnKOvX-Lav8OljLxav4cTeo"
+telegram_user_id = "5981179544"
+
+# ✅ Email
+email_sender = "moobeenayuba15@gmail.com"
+email_password = "bxgy eorm anyp fbyj"
+email_receiver = "moobeenayuba15@gmail.com"
+
+# === WALLET SETUP ===
+def generate_wallets(n=30):
+    wallets = []
+    for _ in range(n):
+        kp = Keypair()
+        wallets.append(b58encode(kp.secret_key).decode())
+    with open("wallets.json", "w") as f:
+        json.dump(wallets, f)
+    return wallets
+
+def load_wallets():
+    if os.path.exists("wallets.json"):
+        with open("wallets.json", "r") as f:
+            return json.load(f)
+    return generate_wallets()
+
+# === ALERTS ===
+def send_email(subject, body):
+    try:
+        msg = MIMEText(body)
+        msg["From"] = email_sender
+        msg["To"] = email_receiver
+        msg["Subject"] = subject
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(email_sender, email_password)
+        server.send_message(msg)
+        server.quit()
+    except Exception as e:
+        print("❌ Email error:", e)
+
+def telegram_alert(message):
+    try:
+        url = f"https://api.telegram.org/bot{telegram_bot_token}/sendMessage"
+        payload = {"chat_id": telegram_user_id, "text": message}
+        requests.post(url, data=payload)
+    except:
+        print("❌ Telegram alert failed")
+
+# === AUTO TRANSFER SOL TO MAIN ===
+def transfer_sol(kp, amount):
+    try:
+        tx = Transaction()
+        tx.add(transfer(TransferParams(
+            from_pubkey=kp.public_key,
+            to_pubkey=main_wallet,
+            lamports=int(amount * 1_000_000_000)
+        )))
+        response = client.send_transaction(tx, kp, opts=TxOpts(skip_confirmation=False, preflight_commitment=Confirmed))
+        return response["result"]
+    except Exception as e:
+        return f"❌ Transfer failed: {e}"
+
+# === BALANCE + TOKEN CHECK ===
+def get_sol_balance(pubkey):
+    try:
+        res = client.get_balance(pubkey)
+        return res.get("result", {}).get("value", 0) / 1_000_000_000
+    except:
+        return 0.0
+
+def get_token_accounts(pubkey):
+    try:
+        res = client.get_token_accounts_by_owner(
+            pubkey,
+            {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+            encoding="jsonParsed"
+        )
+        return res["result"]["value"]
+    except Exception as e:
+        print(f"❌ Token fetch error: {e}")
+        return []
+
+# === JUPITER AUTO SELL ===
+def auto_sell_token(kp, mint, amount):
+    try:
+        quote_url = "https://quote-api.jup.ag/v6/quote"
+        params = {
+            "inputMint": mint,
+            "outputMint": "So11111111111111111111111111111111111111112",  # SOL
+            "amount": str(int(amount * 10**6)),  # Approximate
+            "slippageBps": 50,
+            "onlyDirectRoutes": True
+        }
+        quote = requests.get(quote_url, params=params).json()
+        if not quote.get("data"):
+            return f"❌ No route to sell {mint[:6]}"
+
+        swap_url = "https://quote-api.jup.ag/v6/swap"
+        swap_body = {
+            "route": quote["data"][0],
+            "userPublicKey": str(kp.public_key),
+            "wrapUnwrapSOL": True,
+            "feeAccount": None
+        }
+        swap_tx = requests.post(swap_url, json=swap_body).json()
+        if "swapTransaction" not in swap_tx:
+            return f"❌ Failed to get swap tx"
+
+        tx_data = base64.b64decode(swap_tx["swapTransaction"])
+        tx = Transaction.deserialize(tx_data)
+        tx.sign(kp)
+        sig = client.send_raw_transaction(tx.serialize(), opts=TxOpts(skip_confirmation=True))
+        return f"✅ Sold {mint[:6]} → tx: {sig['result']}"
+    except Exception as e:
+        return f"❌ Sell error: {e}"
+
+# === PROCESS WALLET ===
+def process_wallet(secret_key):
+    kp = Keypair.from_secret_key(b58decode(secret_key))
+    pubkey = kp.public_key
+    logs = f"\n🔑 {pubkey}\n"
+
+    try:
+        token_accounts = get_token_accounts(pubkey)
+        for acc in token_accounts:
+            info = acc["account"]["data"]["parsed"]["info"]
+            mint = info["mint"]
+            token_amount = int(info["tokenAmount"]["amount"])
+            decimals = int(info["tokenAmount"]["decimals"])
+            balance = token_amount / (10**decimals)
+            if balance > 0.001 and decimals <= 12:
+                result = auto_sell_token(kp, mint, balance)
+                logs += result + "\n"
+                time.sleep(2)
+    except Exception as e:
+        logs += f"❌ Token check failed: {e}\n"
+
+    # Auto-send SOL if enough balance
+    sol_bal = get_sol_balance(pubkey)
+    if sol_bal > 0.002:
+        txid = transfer_sol(kp, sol_bal - 0.001)
+        logs += f"💸 Sent {sol_bal:.4f} SOL to main: {txid}\n"
+    else:
+        logs += f"💤 SOL too low: {sol_bal:.4f} SOL\n"
+
+    return logs
+
+# === MAIN LOOP ===
+def run_bot():
+    logs = "🚀 Solana Bot Run Started\n"
+    wallets = load_wallets()
+    for sk in wallets:
+        logs += process_wallet(sk)
+        time.sleep(random.randint(3, 6))
+    telegram_alert(logs[:4000])  # Max allowed by Telegram
+    send_email("✅ Solana Bot Report", logs)
+    print(logs)
+
+# === LOOP FOREVER EVERY 6 HOURS ===
+while True:
+    run_bot()
+    time.sleep(60 * 60 * 6)
