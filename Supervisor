@@ -1,0 +1,100 @@
+import requests
+import subprocess
+import random
+import string
+import time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+# ==== CONFIGURATION ====
+YOUR_EMAIL = "moobeenayuba15@gmail.com"
+EMAIL_PASSWORD = "bxgy eorm anyp fbyj"  # Your Gmail app password
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+
+# List of all bot repos you want to keep alive
+BOT_LIST = [
+    {"name": "bot1", "folder": "bots/bot1", "repo": "mybot1"},
+    {"name": "bot2", "folder": "bots/bot2", "repo": "mybot2"},
+    {"name": "bot3", "folder": "bots/bot3", "repo": "mybot3"},
+]
+
+# === HELPER FUNCTIONS ===
+def random_string(length=10):
+    return ''.join(random.choice(string.ascii_lowercase) for _ in range(length))
+
+def get_temp_email():
+    login = random_string(8)
+    domain = "1secmail.com"
+    email = f"{login}@{domain}"
+    return login, domain, email
+
+def create_new_github_account(email, username, password):
+    print(f"🚀 Creating GitHub account for {email}...")
+    # Auto account creation simulation (bypass captcha manually if needed)
+    session = requests.Session()
+    session.headers.update({"User-Agent": "Mozilla/5.0"})
+    payload = {
+        "login": username,
+        "email": email,
+        "password": password
+    }
+    response = session.post("https://github.com/join", data=payload)
+    if "captcha" in response.text.lower():
+        print("⚠️ Captcha detected! Manual step required.")
+        send_email("⚠️ Manual GitHub Account Creation Needed", 
+                   f"Please manually create a GitHub account:\n\nUsername: {username}\nEmail: {email}\nPassword: {password}")
+        return None
+    print("✅ GitHub account created.")
+    return {"username": username, "password": password}
+
+def push_bot_to_new_repo(bot_folder, username, repo_name):
+    print(f"🚀 Pushing {repo_name} to new account {username}")
+    subprocess.run(["git", "-C", bot_folder, "init"])
+    subprocess.run(["git", "-C", bot_folder, "add", "."])
+    subprocess.run(["git", "-C", bot_folder, "commit", "-m", "Auto deploy by supervisor"])
+    subprocess.run(["git", "-C", bot_folder, "branch", "-M", "main"])
+    subprocess.run(["git", "-C", bot_folder, "remote", "add", "origin", 
+                   f"https://github.com/{username}/{repo_name}.git"])
+    subprocess.run(["git", "-C", bot_folder, "push", "-u", "origin", "main"])
+
+def send_email(subject, body):
+    print(f"📧 Sending email to {YOUR_EMAIL}")
+    msg = MIMEMultipart()
+    msg['From'] = YOUR_EMAIL
+    msg['To'] = YOUR_EMAIL
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+    server.starttls()
+    server.login(YOUR_EMAIL, EMAIL_PASSWORD)
+    text = msg.as_string()
+    server.sendmail(YOUR_EMAIL, YOUR_EMAIL, text)
+    server.quit()
+
+# === MAIN SUPERVISOR LOOP ===
+def supervisor_loop():
+    while True:
+        print("🔄 Checking all bots...")
+        for bot in BOT_LIST:
+            bot_alive = random.choice([True, False])  # Simulate check
+            if not bot_alive:
+                print(f"❌ {bot['name']} is dead. Re-deploying...")
+                login, domain, temp_email = get_temp_email()
+                username = random_string(12)
+                password = random_string(16)
+                account = create_new_github_account(temp_email, username, password)
+                if account:
+                    push_bot_to_new_repo(bot['folder'], username, bot['repo'])
+                    send_email(f"✅ {bot['name']} Redeployed", 
+                               f"New GitHub Account: {username}\nRepo: {bot['repo']}\nEmail: {temp_email}\nPassword: {password}")
+                else:
+                    print("⚠️ Could not auto-create GitHub account. Waiting for manual intervention.")
+            else:
+                print(f"✅ {bot['name']} is healthy.")
+        print("⏳ Sleeping 5 minutes before next check...")
+        time.sleep(300)
+
+if __name__ == "__main__":
+    supervisor_loop()
